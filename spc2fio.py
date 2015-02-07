@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # Filename: spc2fio.py
 # Author: Sun Zhenyuan <sunzhenyuan@163.com> 2014.12.17
-
+'''
 # FIO trace like this '/dev//md127 write 165363359744 4096'
 # device_file_path read_write LBA_address_bytes size_bytes
 
@@ -26,14 +26,11 @@
 ########## Design:
 # 1. a trace is composed by footmarks. so, we create a Class Footmark
 # 2. a Class Trace, to record Max of footmark, to write trace to file
+'''
 
-import string
 import sys
 
 class Footmark:
-    def getAsuId(self):
-        return self.asuid
-
     def setAsuId(self, asuid):
         self.asuid = asuid
 
@@ -60,6 +57,9 @@ class Footmark:
 
     def setTime(self, time):
         self.time = time
+
+    def getAsuId(self):
+        return self.asuid
 
     def toSpcString(self):
         if self.op == "write":
@@ -183,7 +183,7 @@ def iteractiveTrans():
         tgttrace="./fiotrace/fio_" + srctrace
 
     checkArgument(srctrace, srctype)
-    translateTrace(srctrace, tgttrace, srctype);
+    translateTrace(srctrace, tgttrace, srctype)
 
 def batchTrans():
     if len(sys.argv) != 3:
@@ -196,7 +196,7 @@ def batchTrans():
     srctype = sys.argv[2]
     tgttrace = "./fiotrace/fio_" + srctrace
     checkArgument(srctrace, srctype)
-    translateTrace(srctrace, tgttrace, srctype);
+    translateTrace(srctrace, tgttrace, srctype)
 
 if len(sys.argv) > 1:
     batchTrans()
