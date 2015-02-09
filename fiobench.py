@@ -46,7 +46,8 @@ def test_compute_raid_iodepth():
     ioblock = 64 * 1024
     iodepth = compute_raid_iodepth(data_nr, chunk, ioblock)
     if (iodepth != 128):
-        print 'iodepth' + iodepth
+        print('unit test fail: iodepth' + iodepth + ' ' +
+              compute_raid_iodepth.__name__)
 
 def comm_fio_cmd(engine, job_name, io_depth):
     '''common part of fio parameters'''
@@ -79,12 +80,14 @@ def test_macro_job_name():
     trace_file = '/mnt/trac.spc'
     job_name = macro_job_name(trace_file)
     if (job_name != 'trac'):
-        print 'job name:' + job_name
+        print('unit test fail:' + macro_job_name.__name__ +
+              ' job name:' + job_name)
 
     trace_file = '/mnt/trac'
     job_name = macro_job_name(trace_file)
     if (job_name != 'trac'):
-        print 'job name:' + job_name
+        print('unit test fail:' + macro_job_name.__name__ + 
+              'job name:' + job_name)
 
 def micro_fio_cmd(tgt, rw_type, io_block_size, io_depth):
     '''a simple io configuration'''
@@ -132,6 +135,7 @@ def store_fio_result(result, rfile):
 def exec_fio_cmd(fio_cmd, result_file):
     '''execute fio cmd and save result file'''
     print_fio_cmd(fio_cmd)
+    store_fio_result(fio_cmd, result_file)
     (status, result) = commands.getstatusoutput(fio_cmd)
     if (status):
         print_err_info(status, result)
@@ -143,29 +147,64 @@ def exec_fio_cmd(fio_cmd, result_file):
 
     os.system('sync')
 
-def result_file_name(tgt, job_name):
+def result_file_name(tgt, raid_data_nr, job_name):
     '''result file name = target file name + date + job name'''
     tgt_name = file_name(tgt)
-    data_nr = md_data_nr(tgt)
-    return ('./' + tgt_name + '_' + str(data_nr) + '_' + 
-            time.strftime('%Y%m%d%H%M%S') + 
+    if (os.path.exists('/sys/block/' + tgt_name + '/md/txn')):
+        tgt_name = tgt_name + 'T'
+
+    return ('./' + tgt_name + '_' + str(raid_data_nr) + '_' + 
+            time.strftime('%Y%m%d_%H%M%S') + 
             '_' + job_name + '.txt')
 
 def micro_test(tgt, io_block_size):
     '''fio run micro benchmark'''
     job_name = micro_job_name(RW, io_block_size)
     raid_data_nr = md_data_nr(tgt)
-    result_file = result_file_name(tgt + '_' + str(raid_data_nr), job_name)
+    result_file = result_file_name(tgt, raid_data_nr, job_name)
     io_depth = compute_raid_iodepth(raid_data_nr, RAIDCHUNK, io_block_size)
     fio_cmd = micro_fio_cmd(tgt, RW, io_block_size, io_depth)
     exec_fio_cmd(fio_cmd, result_file)
+
+def macro_prepare(tgt, trace_file):
+    '''create symbol link for trace target'''
+    trace_fd = file(trace_file, 'r')
+    line = trace_fd.readline()
+    line = trace_fd.readline()
+    trace_fd.close()
+
+    items = line.split()
+
+    try:
+        if (os.path.lexists(items[0]) and os.path.islink(items[0])):
+            os.remove(items[0])
+        os.symlink(tgt, items[0])
+    except OSError:
+        print 'link ' + items[0] + ' error'
+
+def test_macro_prepare():
+    '''unit test macro_prepare'''
+    test_trace = './fio_web_1.csv'
+    test_fd = file(test_trace, 'w')
+    test_fd.write('fio version 2 iolog\n')
+    test_fd.write('/dev//asu-1 add\n')
+    test_fd.write('/dev//asu-1 open\n')
+    test_fd.close()
+    macro_prepare('/dev/md127', test_trace)
+    link = '/dev/asu-1'
+    if (os.path.lexists(link) and os.path.islink(link)):
+        pass
+    else:
+        print 'unit test fail: ' + test_macro_prepare.__name__
+    os.remove(test_trace)
 
 def macro_test(tgt, trace_file):
     '''fio replay trace benchmark'''
     raid_data_nr = md_data_nr(tgt)
     job_name = macro_job_name(trace_file)
-    result_file = result_file_name(tgt + '_' + str(raid_data_nr), job_name)
+    result_file = result_file_name(tgt, raid_data_nr, job_name)
     io_depth = compute_raid_iodepth(raid_data_nr, RAIDCHUNK, BS)
+    macro_prepare(tgt, trace_file)
     fio_cmd = macro_fio_cmd(tgt, trace_file, io_depth)
     exec_fio_cmd(fio_cmd, result_file)
 
@@ -173,6 +212,7 @@ def unit_test_all():
     '''run all unit test'''
     test_macro_job_name()
     test_compute_raid_iodepth()
+    test_macro_prepare()
 
 unit_test_all()
 
@@ -217,7 +257,10 @@ def all_macro_test():
         return -1
 
     md_dev = sys.argv[1]
-    trace_dir = '/root/trace/chosentrace/'
+    if (sys_arg_cnt == 3):
+        trace_dir = sys.argv[2]
+    else:
+        trace_dir = '/root/trace/chosentrace/'
     traces = get_file_list(trace_dir)
 
     if (traces):
