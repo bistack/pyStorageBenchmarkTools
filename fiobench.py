@@ -89,13 +89,13 @@ def test_macro_job_name():
         print('unit test fail:' + macro_job_name.__name__ + 
               'job name:' + job_name)
 
-def micro_fio_cmd(tgt, rw_type, io_block_size, io_depth):
+def micro_fio_cmd(tgt, rw_type, io_block_size, io_depth, test_size):
     '''a simple io configuration'''
     job_name = micro_job_name(rw_type, io_block_size)
     tgt_name = file_name(tgt)
     tgt_dir = file_dir(tgt) + '/'
     return (comm_fio_cmd(IOENGINE, job_name, io_depth) +
-            ' --rw=' + rw_type + ' --size=' + TEST_SIZE +
+            ' --rw=' + rw_type + ' --size=' + test_size +
             ' --bs=' + str(io_block_size) +
             ' --directory=' + tgt_dir + ' --filename=' + tgt_name)
 
@@ -127,10 +127,11 @@ def fio_cmd_from_file(fio_file):
 
 def store_fio_result(result, rfile):
     '''store fio result to file'''
-    wfd = file(rfile, 'w')
-    wfd.write(result)
-    wfd.write('\n')
-    wfd.close()
+    if (rfile):
+        wfd = file(rfile, 'w')
+        wfd.write(result)
+        wfd.write('\n')
+        wfd.close()
 
 def exec_fio_cmd(fio_cmd, result_file):
     '''execute fio cmd and save result file'''
@@ -163,7 +164,7 @@ def micro_test(tgt, io_block_size):
     raid_data_nr = md_data_nr(tgt)
     result_file = result_file_name(tgt, raid_data_nr, job_name)
     io_depth = compute_raid_iodepth(raid_data_nr, RAIDCHUNK, io_block_size)
-    fio_cmd = micro_fio_cmd(tgt, RW, io_block_size, io_depth)
+    fio_cmd = micro_fio_cmd(tgt, RW, io_block_size, io_depth, TEST_SIZE)
     exec_fio_cmd(fio_cmd, result_file)
 
 def macro_prepare(tgt, trace_file):
@@ -228,15 +229,8 @@ def md_data_nr(tgt_file):
     print 'md data nr:' + data_nr
     return int(data_nr) - 2
 
-def all_micro_test():
+def all_micro_test(md_dev):
     '''run all micro test, var in io size'''
-    sys_arg_cnt = len(sys.argv)
-    if (sys_arg_cnt < 2):
-        print 'need a dev file'
-        return -1
-
-    md_dev = sys.argv[1]
-    
     for io_size in get_io_block_size_list():
         micro_test(md_dev, io_size)
 
@@ -249,22 +243,49 @@ def get_file_list(trace_dir):
     
     return all_traces.split()
 
-def all_macro_test():
-    '''run all macro test, var in io size'''
-    sys_arg_cnt = len(sys.argv)
-    if (sys_arg_cnt < 2):
-        print 'need a dev file'
-        return -1
+def initialize_target(tgt, size_gb):
+    '''write zero to initialize a alloc-on-write disk for read test'''
+    test_size = str(size_gb) + 'G'
+    raid_data_nr = md_data_nr(tgt)
+    io_block_size = 1024 * 1024 # 1MB
+    io_depth = compute_raid_iodepth(raid_data_nr, RAIDCHUNK, io_block_size)
+    fio_cmd = micro_fio_cmd(tgt, RW, io_block_size, io_depth, test_size)
+    exec_fio_cmd(fio_cmd, None)
 
-    md_dev = sys.argv[1]
-    if (sys_arg_cnt == 3):
-        trace_dir = sys.argv[2]
-    else:
-        trace_dir = '/root/trace/chosentrace/'
+def all_macro_test(md_dev, trace_dir):
+    '''run all macro test, var in io size'''
     traces = get_file_list(trace_dir)
 
     if (traces):
         for itrace in traces:
             macro_test(md_dev, trace_dir + itrace)
 
-all_macro_test()
+def all_test():
+    '''run all micro and macro test, var in io size'''
+    sys_arg_cnt = len(sys.argv)
+    if (sys_arg_cnt < 2):
+        print 'need a dev file'
+        return -1
+
+    md_dev = sys.argv[1]
+    if (sys_arg_cnt >= 3):
+        trace_dir = sys.argv[2]
+    else:
+        trace_dir = '/root/trace/chosentrace/'
+
+    for i in sys.argv:
+        print "arg: " + i
+
+    if (file_name(sys.argv[0]) != 'fiobench'):
+        return
+    all_micro_test(md_dev)
+
+    if (sys_arg_cnt >= 4):
+        if (sys.argv[3] == 'ninit'):
+            pass
+    else:
+        initialize_target(md_dev, 500)
+
+    all_macro_test(md_dev, trace_dir)
+
+all_test()
