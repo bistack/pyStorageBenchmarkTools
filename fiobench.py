@@ -262,26 +262,37 @@ def all_macro_test(md_dev, trace_dir):
 
 def all_test():
     '''run all micro and macro test, var in io size'''
-    sys_arg_cnt = len(sys.argv)
-    if (sys_arg_cnt < 2):
-        print 'need a dev file'
-        return -1
-
-    md_dev = sys.argv[1]
-    if (sys_arg_cnt >= 3):
-        trace_dir = sys.argv[2]
-    else:
-        trace_dir = '/root/trace/chosentrace/'
-
     for i in sys.argv:
         print "arg: " + i
 
+    sys_arg_cnt = len(sys.argv)
+
+    if (sys_arg_cnt < 3):
+        print 'need a dev file and test type'
+        return -1
+
+    md_dev = sys.argv[1]
+    test_type = sys.argv[2]
+
     if (file_name(sys.argv[0]) != 'fiobench'):
         return
-    all_micro_test(md_dev)
+
+    if (test_type == 'micro' or test_type == 'all'):
+        all_micro_test(md_dev)
+
+    if (test_type == 'micro'):
+        return
+
+    if (test_type != 'macro' and test_type != 'all'):
+        return
 
     if (sys_arg_cnt >= 4):
-        if (sys.argv[3] == 'ninit'):
+        trace_dir = sys.argv[3]
+    else:
+        trace_dir = '/root/trace/chosentrace/'
+
+    if (sys_arg_cnt >= 5):
+        if (sys.argv[4] == 'ninit'):
             pass
     else:
         initialize_target(md_dev, 500)
