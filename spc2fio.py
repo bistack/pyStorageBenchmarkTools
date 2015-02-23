@@ -92,10 +92,12 @@ class Footmark:
         mylist = fiostr.split()
 
         self.asuid = mylist[0]
-        self.addr = mylist[1]
-        self.size = mylist[2]
-        self.op = mylist[3]
-        self.time = mylist[4]
+        self.op = mylist[1]
+        self.addr = mylist[2]
+        self.size = mylist[3]
+
+        if len(mylist) > 4:
+            self.time = mylist[4]
 
     def setByCsv(self, csvstr):
         mylist = csvstr.split(',')
@@ -107,6 +109,9 @@ class Footmark:
             self.op = "read"
         self.addr = mylist[4]
         self.size = mylist[5]
+
+    def getIoType(self):
+        return self.op
 
 class Trace:
     def __init__(self):
@@ -124,55 +129,108 @@ class Trace:
             self.dict[asuid] = new
         return value
 
+    def getMinFootmark(self, asuid):
+        if not self.dict.has_key(asuid):
+            return -1
+        return long(self.dict[asuid])
+
+    def setMinFootmark(self, asuid, addr):
+        value = self.getMinFootmark(asuid)
+        new = long(addr)
+        if value > new or value < 0:
+            self.dict[asuid] = new
+            return new
+        return value
+
+    def setFootmark(self, asuid, rw, addr, size):
+        ''' rw == 1 , write; rw == 0, read '''
+        ret = self.setMaxFootmark(asuid + ' i max', addr, size)
+        self.setMinFootmark(asuid + ' i min', addr)
+
+        if (rw == 'write'):
+            self.setMaxFootmark(asuid + ' w max', addr, size)
+            self.setMinFootmark(asuid + ' w min', addr)
+
+        if (rw == 'read'):
+            self.setMaxFootmark(asuid + ' r max', addr, size)
+            self.setMinFootmark(asuid + ' r min', addr)
+        
+        return ret
+
 def checkArgument(srctrace, srctype):
     if not len(srctrace) or not len(srctype):
         print('not invalid trace')
         quit()
 
-    if srctype != 'spc' and srctype != 'csv':
+    if srctype != 'spc' and srctype != 'csv' and srctype != 'fio':
         print('wrong trace type: ' + srctype)
         quit()
 
-def translateTrace(srctrace, tgttrace, srctype):
-    src = file(srctrace, 'r')
-    tgt = file(tgttrace, 'w')
-
+def translateTrace(srctrace, srctype, tgttrace):
+    tgt = None
     ft = Footmark()
     trace = Trace()
 
-    tgt.write('fio version 2 iolog\n')
+    if (tgttrace):
+        tgt = file(tgttrace, 'w')
+        tgt.write('fio version 2 iolog\n')
+
+    src = file(srctrace, 'r')
     line = src.readline()
+
+    if srctype == 'fio': # skip head lines
+            line = src.readline()
+            line = src.readline()
+            line = src.readline()
 
     while len(line) > 0:
         if srctype == "spc":
             ft.setBySpc(line)
-        else:
+        elif srctype == 'csv':
             ft.setByCsv(line)
+        elif srctype == 'fio':
+            if len(line.split()) <= 3:
+                line = src.readline()
+                continue
+            ft.setByFio(line)
+        else:
+            return
 
-        v = trace.setMaxFootmark(ft.asuid, ft.addr, ft.size)
+        v = trace.setFootmark(ft.asuid, ft.getIoType(), ft.addr, ft.size)
 
-        if v < 0:
+        if v < 0 and tgt:
             tgt.write('/dev//asu-' + ft.getAsuId() + ' add\n')
             tgt.write('/dev//asu-' + ft.getAsuId() + ' open\n')
 
-        if long(ft.getSize()) & ((1 << 12) - 1):
+        '''
+        if long(ft.getSize()) & ((1 << 12) - 1): # not 4KB aligned
             line = src.readline()
             continue
-
-        tgt.write(ft.toFioString())
-        tgt.write('\n')
+        '''
+        if tgt:
+            tgt.write(ft.toFioString())
+            tgt.write('\n')
 
         line = src.readline()
 
-    for key in trace.dict:
-        tgt.write('/dev//asu-' + key + ' close\n')
-
     src.close()
-    tgt.close()
-    
-    print(srctrace)
-    print(trace.dict)
 
+    if tgt:
+        for key in trace.dict.items():
+            tgt.write('/dev//asu-' + key + ' close\n')
+
+        tgt.close()
+
+    trace_char_file = file('./trace_char.txt', 'a')
+    trace_char_file.write(srctrace)
+    trace_char_file.write('\n')
+
+    for key, size in trace.dict.items():
+        trace_char_file.write(key + ': ' + str(size))
+        trace_char_file.write('\n')
+
+    trace_char_file.write('\n')
+    trace_char_file.close()
 
 def iteractiveTrans():
     srctrace = raw_input('input trace file:')
@@ -183,23 +241,30 @@ def iteractiveTrans():
         tgttrace="./fiotrace/fio_" + srctrace
 
     checkArgument(srctrace, srctype)
-    translateTrace(srctrace, tgttrace, srctype)
+    translateTrace(srctrace, srctype, tgttrace)
 
 def batchTrans():
-    if len(sys.argv) != 3:
+    if len(sys.argv) < 3:
         for i in sys.argv:
             print i
-        print "arguments: need 'a srctrace file' and 'srctype: cvs spc'"
+        print "arguments: need 'a srctrace file' and 'srctype: cvs spc fio'"
         quit()
 
     srctrace = sys.argv[1]
     srctype = sys.argv[2]
-    tgttrace = "./fiotrace/fio_" + srctrace
+
+    if len(sys.argv) > 3:
+        tgttrace = sys.argv[3]
+
+        if tgttrace == 'none':
+            tgttrace = None
+    else:
+        tgttrace = "./fiotrace/fio_" + srctrace
+
     checkArgument(srctrace, srctype)
-    translateTrace(srctrace, tgttrace, srctype)
+    translateTrace(srctrace, srctype, tgttrace)
 
 if len(sys.argv) > 1:
     batchTrans()
 else:
     iteractiveTrans()
-
