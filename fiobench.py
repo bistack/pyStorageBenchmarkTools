@@ -226,14 +226,27 @@ unit_test_all()
 def md_data_nr(tgt_file):
     '''get data disk number of a RAID6'''
     tgt = file_name(tgt_file)
-    (status, data_nr) = commands.getstatusoutput('cat /sys/block/' +
+    (status, disk_nr) = commands.getstatusoutput('cat /sys/block/' +
                                                  tgt + '/md/raid_disks')
     if (status):
-        print_err_info(status, data_nr)
+        print_err_info(status, disk_nr)
+        return -1
+    
+    (status, raid_type) = commands.getstatusoutput('cat /sys/block/' +
+                                                   tgt + '/md/level')
+    if (status):
+        print_err_info(status, raid_type)
         return -1
 
-    print 'md data nr:' + data_nr
-    return int(data_nr) - 2
+    print 'md type:' + raid_type + ' disk nr:' + disk_nr
+
+    if raid_type == 'raid6':
+        return int(disk_nr) - 2
+    elif (raid_type == 'raid5' or raid_type == 'raid4'):
+        return int(disk_nr) - 1
+    else:
+        print 'unkown md type:' + raid_type
+        return int(disk_nr)
 
 def all_micro_test(md_dev):
     '''run all micro test, var in io size'''
