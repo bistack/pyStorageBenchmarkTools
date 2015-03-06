@@ -8,12 +8,16 @@ import os
 import sys
 
 IOENGINE = 'libaio'
-TEST_SIZE = '8GB'
 
 RW = 'write'
-BS = 4 * 1024 # default 4KB
+BS = 4 * 1024                      # bytes default 4KB
 TESTFILE = 'asu-0'
-RAIDCHUNK = 512 * 1024
+RAIDCHUNK = 512 * 1024             # bytes
+DISK_CACHE_SIZE = 64 * 1024 * 1024 # bytes
+
+def compute_micro_test_size(data_disk_nr, disk_cache_size):
+    '''in order to make disk cache impact <= 1% on sequential IO'''
+    return disk_cache_size * data_disk_nr * 100
 
 def get_io_block_size_list():
     '''io size from 4KB to 2MB'''
@@ -53,7 +57,8 @@ def comm_fio_cmd(engine, job_name, io_depth):
     '''common part of fio parameters'''
     return ('fio --direct=1 --ioengine=' + engine + 
             ' --name=' + job_name +
-            ' --iodepth=' + str(io_depth))
+            ' --iodepth=' + str(io_depth) +
+            ' --write_iops_log --log_avg_msec=' + str(500))
 
 def micro_job_name(rw_type, io_block_size):
     '''job name = rw + io block size'''
@@ -128,7 +133,7 @@ def fio_cmd_from_file(fio_file):
 def store_fio_result(result, rfile):
     '''store fio result to file'''
     if (rfile):
-        wfd = file(rfile, 'w')
+        wfd = file(rfile, 'a')
         wfd.write(result)
         wfd.write('\n')
         wfd.close()
@@ -164,7 +169,8 @@ def micro_test(tgt, io_block_size):
     raid_data_nr = md_data_nr(tgt)
     result_file = result_file_name(tgt, raid_data_nr, job_name)
     io_depth = compute_raid_iodepth(raid_data_nr, RAIDCHUNK, io_block_size)
-    fio_cmd = micro_fio_cmd(tgt, RW, io_block_size, io_depth, TEST_SIZE)
+    test_size = compute_micro_test_size(raid_data_nr, DISK_CACHE_SIZE)
+    fio_cmd = micro_fio_cmd(tgt, RW, io_block_size, io_depth, test_size)
     exec_fio_cmd(fio_cmd, result_file)
 
 def macro_prepare(tgt, trace_file):
@@ -295,7 +301,7 @@ def all_test():
         if (sys.argv[4] == 'ninit'):
             pass
     else:
-        initialize_target(md_dev, 500)
+        initialize_target(md_dev, 403)
 
     all_macro_test(md_dev, trace_dir)
 
