@@ -60,7 +60,7 @@ def comm_fio_cmd(engine, job_name, io_depth):
             ' --iodepth=' + str(io_depth) +
             ' --write_iops_log --log_avg_msec=' + str(500))
 
-def micro_job_name(rw_type, io_block_size):
+def micro_job_type(rw_type, io_block_size):
     '''job name = rw + io block size'''
     return rw_type + str(io_block_size)
 
@@ -76,38 +76,36 @@ def file_dir(filepath):
     denties = os.path.split(filepath)
     return denties[0]
 
-def macro_job_name(trace_file):
+def macro_job_type(trace_file):
     '''use trace file without path as job name'''
     return file_name(trace_file)
 
-def test_macro_job_name():
-    '''unit test for macro_job_name'''
+def test_macro_job_type():
+    '''unit test for macro_job_type'''
     trace_file = '/mnt/trac.spc'
-    job_name = macro_job_name(trace_file)
-    if (job_name != 'trac'):
-        print('unit test fail:' + macro_job_name.__name__ +
-              ' job name:' + job_name)
+    job_type = macro_job_type(trace_file)
+    if (job_type != 'trac'):
+        print('unit test fail:' + macro_job_type.__name__ +
+              ' job name:' + job_type)
 
     trace_file = '/mnt/trac'
-    job_name = macro_job_name(trace_file)
-    if (job_name != 'trac'):
-        print('unit test fail:' + macro_job_name.__name__ + 
-              'job name:' + job_name)
+    job_type = macro_job_type(trace_file)
+    if (job_type != 'trac'):
+        print('unit test fail:' + macro_job_type.__name__ + 
+              'job name:' + job_type)
 
-def micro_fio_cmd(tgt, rw_type, io_block_size, io_depth, test_size):
+def micro_fio_cmd(tgt, rw_type, io_block_size, test_size, fio_comm):
     '''a simple io configuration'''
-    job_name = micro_job_name(rw_type, io_block_size)
     tgt_name = file_name(tgt)
     tgt_dir = file_dir(tgt) + '/'
-    return (comm_fio_cmd(IOENGINE, job_name, io_depth) +
+    return (fio_comm +
             ' --rw=' + rw_type + ' --size=' + test_size +
             ' --bs=' + str(io_block_size) +
             ' --directory=' + tgt_dir + ' --filename=' + tgt_name)
 
-def macro_fio_cmd(tgt, trace_file, io_depth):
+def macro_fio_cmd(tgt, trace_file, fio_comm):
     '''a trace io configuration'''
-    job_name = trace_file
-    return (comm_fio_cmd(IOENGINE, job_name, io_depth) +
+    return (fio_comm +
             ' --read_iolog=' + trace_file + ' --replay_no_stall=1' + 
             ' --replay_redirect=' + tgt)
 
@@ -153,7 +151,7 @@ def exec_fio_cmd(fio_cmd, result_file):
 
     os.system('sync')
 
-def result_file_name(tgt, raid_data_nr, job_name):
+def result_file_name(tgt, raid_data_nr, job_type):
     '''result file name = target file name + date + job name'''
     tgt_name = file_name(tgt)
     if (os.path.exists('/sys/block/' + tgt_name + '/md/txn')):
@@ -161,16 +159,18 @@ def result_file_name(tgt, raid_data_nr, job_name):
 
     return ('./' + tgt_name + '_' + str(raid_data_nr) + '_' + 
             time.strftime('%Y%m%d_%H%M%S') + 
-            '_' + job_name + '.txt')
+            '_' + job_type + '.txt')
 
 def micro_test(tgt, io_block_size):
     '''fio run micro benchmark'''
-    job_name = micro_job_name(RW, io_block_size)
+    job_type = micro_job_type(RW, io_block_size)
     raid_data_nr = md_data_nr(tgt)
-    result_file = result_file_name(tgt, raid_data_nr, job_name)
+    result_file = result_file_name(tgt, raid_data_nr, job_type)
     io_depth = compute_raid_iodepth(raid_data_nr, RAIDCHUNK, io_block_size)
     test_size = compute_micro_test_size(raid_data_nr, DISK_CACHE_SIZE)
-    fio_cmd = micro_fio_cmd(tgt, RW, io_block_size, io_depth, test_size)
+    job_name = file_name(result_file)
+    fio_comm = comm_fio_cmd(IOENGINE, job_name, io_depth)
+    fio_cmd = micro_fio_cmd(tgt, RW, io_block_size, test_size, fio_comm)
     exec_fio_cmd(fio_cmd, result_file)
 
 def macro_prepare(tgt, trace_file):
@@ -208,16 +208,18 @@ def test_macro_prepare():
 def macro_test(tgt, trace_file):
     '''fio replay trace benchmark'''
     raid_data_nr = md_data_nr(tgt)
-    job_name = macro_job_name(trace_file)
-    result_file = result_file_name(tgt, raid_data_nr, job_name)
+    job_type = macro_job_type(trace_file)
+    result_file = result_file_name(tgt, raid_data_nr, job_type)
     io_depth = compute_raid_iodepth(raid_data_nr, RAIDCHUNK, BS)
     macro_prepare(tgt, trace_file)
-    fio_cmd = macro_fio_cmd(tgt, trace_file, io_depth)
+    job_name = file_name(result_file)
+    fio_comm = comm_fio_cmd(IOENGINE, job_name, io_depth)
+    fio_cmd = macro_fio_cmd(tgt, trace_file, fio_comm)
     exec_fio_cmd(fio_cmd, result_file)
 
 def unit_test_all():
     '''run all unit test'''
-    test_macro_job_name()
+    test_macro_job_type()
     test_compute_raid_iodepth()
     test_macro_prepare()
 
@@ -268,7 +270,8 @@ def initialize_target(tgt, size_gb):
     raid_data_nr = md_data_nr(tgt)
     io_block_size = 1024 * 1024 # 1MB
     io_depth = compute_raid_iodepth(raid_data_nr, RAIDCHUNK, io_block_size)
-    fio_cmd = micro_fio_cmd(tgt, RW, io_block_size, io_depth, test_size)
+    fio_comm = comm_fio_cmd(IOENGINE, 'init_target', io_depth)
+    fio_cmd = micro_fio_cmd(tgt, RW, io_block_size, test_size, fio_comm)
     exec_fio_cmd(fio_cmd, None)
 
 def all_macro_test(md_dev, trace_dir):
