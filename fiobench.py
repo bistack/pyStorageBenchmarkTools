@@ -58,7 +58,8 @@ def comm_fio_cmd(engine, job_name, io_depth):
     return ('fio --direct=1 --ioengine=' + engine + 
             ' --name=' + job_name +
             ' --iodepth=' + str(io_depth) +
-            ' --write_iops_log --log_avg_msec=' + str(500))
+            ' --write_iops_log=' + job_name +
+            ' --log_avg_msec=' + str(500))
 
 def micro_job_type(rw_type, io_block_size):
     '''job name = rw + io block size'''
@@ -99,7 +100,7 @@ def micro_fio_cmd(tgt, rw_type, io_block_size, test_size, fio_comm):
     tgt_name = file_name(tgt)
     tgt_dir = file_dir(tgt) + '/'
     return (fio_comm +
-            ' --rw=' + rw_type + ' --size=' + test_size +
+            ' --rw=' + rw_type + ' --size=' + str(test_size) +
             ' --bs=' + str(io_block_size) +
             ' --directory=' + tgt_dir + ' --filename=' + tgt_name)
 
