@@ -311,6 +311,9 @@ info_names = ['Avg Write BW', 'Avg Write IOPS', 'Avg Write Lat', 'Max Write Lat'
               'Avg Read BW', 'Avg Read IOPS', 'Avg Read Lat', 'Max Read Lat',
               'Avg CPU Usr',  'Avg CPU Sys']
 
+def get_compare_space():
+    return 10 - len(info_names) % 10
+
 def get_excel_workbook(excel_name):
     wb = None
     try:
@@ -322,10 +325,10 @@ def get_excel_workbook(excel_name):
 
     return wb
 
-def init_excel_worksheet(ws):
-    rows_names = ['Test name'] + info_names
+def excel_init_worksheet(ws, test_type, offset):
+    rows_names = ['Test ' + test_type] + info_names
 
-    row_id = 1
+    row_id = offset
     for row_name in rows_names:
         cell = 'A' + str(row_id)
         ws[cell] = row_name
@@ -339,7 +342,7 @@ def get_fio_dev_conf(fio_result_name):
         return ' '.join([parts[0]] + parts[2:])
 
 def get_excel_worksheet(fio_result_name, wb):
-    ws_name = get_fio_dev_conf(fio_result_name)
+    ws_name = get_fio_dev_conf(fio_result_name).replace('T', '')
     ws = None
 
     try:
@@ -359,42 +362,138 @@ def get_column_name(fio_result_name):
     else:
         return int(parts[1])
 
+def search_cell_in_row(ws, row, col_label, l_col):
+    last_col_letter = utils.get_column_letter(l_col)
+
+    cell_found = None
+    for arow in ws.iter_rows('A' + str(row) + ':' + last_col_letter + str(row)):
+        for cell in arow:
+            if cell.value == col_label:
+                cell_found = cell
+                break
+    return cell_found
+
+def move_back_one_column(ws, col):
+    l_row = len(info_names) * 2  + 2 + get_compare_space()
+
+    if (l_row < 1):
+        print 'Err: highest row %d' % (str(l_row))
+        return
+
+    for row in range(1, l_row):
+        i_cell = ws.cell(row=row, column=col)
+        if not i_cell.value:
+            continue
+
+        next_cell = ws.cell(row=row, column=col+1)
+        next_cell.value = i_cell.value
+        i_cell.value = None
+
+def move_back_columns(ws, begin_col, end_col):
+    for col_i in range(end_col, begin_col, -1):
+        move_back_one_column(ws, col_i)
+
+def get_pos_insert_sort_one_column(ws, col_label, l_col):
+    l_col_letter = utils.get_column_letter(l_col)
+
+    found_cell = None
+
+    # alwasy see the first row for column's label, column A is label
+    for arow in ws.iter_rows('B1:' + l_col_letter + '1'):
+        for cell in arow:
+            if not cell.value or int(cell.value) > int(col_label):
+                found_cell = cell
+                break
+
+    if not found_cell:
+        col = l_col + 1
+        col_letter = utils.get_column_letter(col)
+    else:
+        col_letter = found_cell.column
+        if found_cell.value:
+            col_idx = utils.column_index_from_string(found_cell.column)
+            move_back_columns(ws, col_idx, l_col)
+
+    return col_letter
+
+def excel_add_col_label_in_row(ws, row, col_label, l_col):
+
+    # always search the first row
+    cell_found = search_cell_in_row(ws, 1, col_label, l_col)
+
+    if cell_found:
+        #print 'found %s, column: %s' % (cell_found.value, cell_found.column)
+        col_letter = cell_found.column
+    else:
+        col_letter = get_pos_insert_sort_one_column(ws, col_label, l_col)
+
+    cell = ws.cell(col_letter + str(row))
+    cell.value = col_label
+
+    return col_letter
+
+def excel_add_col_label_in_compare_rows(ws, row, col_label, l_col):
+    col_letter_a = excel_add_col_label_in_row(ws, 1, col_label, l_col)
+
+    if row > 1:
+        col_letter_b = excel_add_col_label_in_row(ws, row, col_label, l_col)
+
+        if col_letter_a != col_letter_b:
+            print ('Err: column letter not match, %s %s'
+                   % (col_letter_a, col_letter_b))
+            return None
+
+    return col_letter_a
+
+def get_start_row(fio_result_name):
+    conf = get_fio_dev_conf(fio_result_name)
+    parts = conf.split()
+    start_row = 1
+    
+    dev_type = 'T'
+    if parts[0].find('T') < 0:
+        space = get_compare_space()
+        start_row += len(info_names) + space
+        dev_type = 'MD'
+
+    return (dev_type, start_row)
+
+def check_start_row_label(ws, row):
+    row_label = ws.cell('A' + str(row)).value
+
+    if  row_label.find('Test') < 0:
+        print 'Err: compare row %s' % (row_label)
+        return 0
+    
+    return 1
+
 def excel_add_fio_result(fio_result_obj, wb):
     ws = get_excel_worksheet(fio_result_obj.name, wb)
     if not wb or not ws:
         return
 
-    init_excel_worksheet(ws)
+    space = get_compare_space()
+    (dev_type, start_row) = get_start_row(fio_result_obj.name)
+    excel_init_worksheet(ws, dev_type, start_row)
+    
+    if not check_start_row_label(ws, start_row):
+        return
 
-    cell_found = None
     l_col = ws.get_highest_column()
-    l_col_letter = utils._get_column_letter(l_col)
+    col_label = get_column_name(fio_result_obj.name)
+    col_letter = excel_add_col_label_in_compare_rows(ws, start_row, col_label,
+                                                     l_col)
 
-    col_name = get_column_name(fio_result_obj.name)
+    if not col_letter:
+        return
 
-    for row in ws.iter_rows('A1:'+ l_col_letter + '1'):
-        for cell in row:
-            if cell.value == col_name:
-                cell_found = cell
-                break
-
-    col_letter = None
-    if cell_found:
-        #print 'found %s, column: %s' % (cell_found.value, cell_found.column)
-        col_letter = cell_found.column
-    else:
-        col = l_col + 1
-        col_letter = utils._get_column_letter(col)
-        cell = ws.cell(col_letter + '1')
-        cell.value = col_name
-
-    i = 2
+    i_row = start_row + 1
     for name in info_names:
         if fio_result_obj.info_dic.has_key(name):
             value = fio_result_obj.get_info(name)
-            cell = ws.cell(col_letter + str(i))
+            cell = ws.cell(col_letter + str(i_row))
             if cell.value:
-                label_cell = ws.cell('A' + str(i))
+                label_cell = ws.cell('A' + str(i_row))
                 if (label_cell.value == 'Avg CPU Usr' or
                     label_cell.value == 'Avg CPU Sys'):
                     if float(value) > float(cell.value):
@@ -402,17 +501,18 @@ def excel_add_fio_result(fio_result_obj, wb):
 
                 elif (float(cell.value) > float(value) * 2 or
                     float(value) > float(cell.value) * 2):
-                    label = ws.cell('A' + str(cell.row)).value
-                    print ('sheet: %s, col_name: %d, label: %s, old: %s, new: %s'
-                           % (ws.title, col_name, str(label), cell.value, value))
+                    row_label = ws.cell('A' + str(cell.row)).value
+                    print (('sheet: %s, col_label: %s, dev type: %s,' +
+                           'label: %s, old: %s, new: %s')
+                           % (ws.title, col_label, dev_type, str(row_label), 
+                              cell.value, value))
                 else:
                     avg = '%.2f' % (float(cell.value) + float(value) / 2)
                     cell.value = float(avg)
             else:
                 cell.value =  float(value)
 
-        i+=1
-
+        i_row +=1
 
 def get_file_list(idir):
     '''files in a dir'''
@@ -424,9 +524,11 @@ def get_file_list(idir):
     return files.split()
 
 def parse_all_test_file():
+    excel_file_name = 'test'
+
     if len(sys.argv) > 0:
         rslt_dir = sys.argv[1]
-        wb = get_excel_workbook('test')
+        wb = get_excel_workbook(excel_file_name)
         files = get_file_list(rslt_dir)
 
         if files and len(files) > 0:
@@ -456,6 +558,7 @@ def parse_all_test_file():
                 if rst:
                     excel_add_fio_result(rst, wb)
 
-        wb.save('test.xlsx')
+        
+        wb.save(excel_file_name + '.xlsx')
 
 parse_all_test_file()
