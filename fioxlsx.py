@@ -116,6 +116,24 @@ test_get_fio_char()
 
 import commands
 import sys
+
+def print_fio_result(fio_result_obj):
+    rst = fio_result_obj
+    print rst.get_name()
+    print rst.get_info('Avg Write BW')
+    print rst.get_info('Avg Write IOPS')
+    print rst.get_info('Avg Write Lat')
+    print rst.get_info('Max Write Lat')
+    print rst.get_info('Avg Read BW')
+    print rst.get_info('Avg Read IOPS')
+    print rst.get_info('Avg Read Lat')
+    print rst.get_info('Max Read Lat')
+    print rst.get_info('Avg CPU Usr')
+    print rst.get_info('Avg CPU Sys')
+    for lat_pct in rst.get_latency_percent():
+        for lat, pct in lat_pct.get_msec_percent().items():
+            print '%s %s' %(lat, pct)
+
 def parse_fio_result(fio_result):
     #print fio_result
     (status, fiostr) = commands.getstatusoutput('grep fio-2 ' + fio_result)
@@ -283,27 +301,11 @@ def parse_fio_result(fio_result):
                     rst.set_info('Avg CPU Sys', pct_value)
 
     result_fd.close()
-    """
-    print rst.get_name()
-    print rst.get_info('Avg Write BW')
-    print rst.get_info('Avg Write IOPS')
-    print rst.get_info('Avg Write Lat')
-    print rst.get_info('Max Write Lat')
-    print rst.get_info('Avg Read BW')
-    print rst.get_info('Avg Read IOPS')
-    print rst.get_info('Avg Read Lat')
-    print rst.get_info('Max Read Lat')
-    print rst.get_info('Avg CPU Usr')
-    print rst.get_info('Avg CPU Sys')
-    for lat_pct in rst.get_latency_percent():
-        for lat, pct in lat_pct.get_msec_percent().items():
-            print '%s %s' %(lat, pct)
-    """
     return rst
 
 
 from openpyxl import Workbook
-from openpyxl import load_workbook
+from openpyxl.reader.excel import load_workbook
 from openpyxl import utils
 import os
 
@@ -472,7 +474,6 @@ def excel_add_fio_result(fio_result_obj, wb):
     if not wb or not ws:
         return
 
-    space = get_compare_space()
     (dev_type, start_row) = get_start_row(fio_result_obj.name)
     excel_init_worksheet(ws, dev_type, start_row)
     
@@ -502,7 +503,7 @@ def excel_add_fio_result(fio_result_obj, wb):
                 elif (float(cell.value) > float(value) * 2 or
                     float(value) > float(cell.value) * 2):
                     row_label = ws.cell('A' + str(cell.row)).value
-                    print (('sheet: %s, col_label: %s, dev type: %s,' +
+                    print (('sheet: %s, col_label: %s, dev type: %s, ' +
                            'label: %s, old: %s, new: %s')
                            % (ws.title, col_label, dev_type, str(row_label), 
                               cell.value, value))
@@ -523,8 +524,68 @@ def get_file_list(idir):
 
     return files.split()
 
+def get_comparable_row_idx_by_label(ws, row_label):
+    # we skip the first label with diff dev type 
+    idx1 = 2
+    for row_idx in range(2, ws.get_highest_row() / 2):
+        cell = ws.cell('A' + str(row_idx))
+        if cell and cell.value == row_label:
+            idx1 = cell.row
+            break
+
+    space = get_compare_space()
+    return (idx1, idx1 + space + len(info_names))
+
+def check_comparalbe_row_idxes(ws, row1, row2):
+    cell1 = ws.cell('A' + str(row1))
+    cell2 = ws.cell('A' + str(row2))
+
+    if cell1 and cell2 and (cell1.value == cell2.value):
+        return 1
+
+    print ('Warn: row %d: %s  %d: %s labels not match'
+           % (row1, cell1.value, row2, cell2.value))
+    return 0
+
+from openpyxl.charts import ScatterChart, Reference, Series
+
+def excel_draw_compare_chart(ws, row_label):
+    '''Warning: Openpyxl currently supports chart creation within a worksheet only.
+    Charts in existing workbooks will be lost'''
+
+    (row1, row2) = get_comparable_row_idx_by_label(ws, row_label)
+
+    if not check_comparalbe_row_idxes(ws, row1, row2):
+        return
+
+    start_col = 2
+    end_col = ws.get_highest_column()
+
+    xvalues = Reference(ws, (1, start_col), (1, end_col))
+
+    values1 = Reference(ws, (row1, start_col), (row1, end_col))
+    series1 = Series(values1, title=row_label + ' T', xvalues=xvalues)
+
+    values2 = Reference(ws, (row2, start_col), (row2, end_col))
+    series2 = Series(values2, title=row_label + ' MD', xvalues=xvalues)
+
+    lines = ScatterChart()
+    lines.append(series1)
+    lines.append(series2)
+    ws.add_chart(lines)
+
+def excel_draw_all_char(wb):
+    for ws_name in wb.sheetnames:
+        ws = wb.get_sheet_by_name(ws_name)
+        if wb.get_index(ws) == 0:
+            continue
+
+        for label in info_names:
+            excel_draw_compare_chart(ws, label)
+
+import time
 def parse_all_test_file():
-    excel_file_name = 'test'
+    excel_file_name = 'test_result_' + time.strftime('%Y%m%d_%H%M%S')
 
     if len(sys.argv) > 0:
         rslt_dir = sys.argv[1]
@@ -558,7 +619,7 @@ def parse_all_test_file():
                 if rst:
                     excel_add_fio_result(rst, wb)
 
-        
+        excel_draw_all_char(wb)
         wb.save(excel_file_name + '.xlsx')
 
 parse_all_test_file()
