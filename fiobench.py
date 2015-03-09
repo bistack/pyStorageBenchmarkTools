@@ -9,7 +9,6 @@ import sys
 
 IOENGINE = 'libaio'
 
-RW = 'write'
 BS = 4 * 1024                      # bytes default 4KB
 TESTFILE = 'asu-0'
 RAIDCHUNK = 512 * 1024             # bytes
@@ -62,8 +61,8 @@ def comm_fio_cmd(engine, job_name, io_depth):
             ' --log_avg_msec=' + str(500))
 
 def micro_job_type(rw_type, io_block_size):
-    '''job name = rw + io block size'''
-    return rw_type + str(io_block_size)
+    '''job name = rw + _seq_ + io block size'''
+    return rw_type + '_seq_' + str(io_block_size)
 
 def file_name(filepath):
     '''get file name without extension'''
@@ -162,16 +161,16 @@ def result_file_name(tgt, raid_data_nr, job_type):
             time.strftime('%Y%m%d_%H%M%S') + 
             '_' + job_type + '.txt')
 
-def micro_test(tgt, io_block_size):
+def micro_test(tgt, io_block_size, rw_type):
     '''fio run micro benchmark'''
-    job_type = micro_job_type(RW, io_block_size)
+    job_type = micro_job_type(rw_type, io_block_size)
     raid_data_nr = md_data_nr(tgt)
     result_file = result_file_name(tgt, raid_data_nr, job_type)
     io_depth = compute_raid_iodepth(raid_data_nr, RAIDCHUNK, io_block_size)
     test_size = compute_micro_test_size(raid_data_nr, DISK_CACHE_SIZE)
     job_name = file_name(result_file)
     fio_comm = comm_fio_cmd(IOENGINE, job_name, io_depth)
-    fio_cmd = micro_fio_cmd(tgt, RW, io_block_size, test_size, fio_comm)
+    fio_cmd = micro_fio_cmd(tgt, rw_type, io_block_size, test_size, fio_comm)
     exec_fio_cmd(fio_cmd, result_file)
 
 def macro_prepare(tgt, trace_file):
@@ -254,7 +253,8 @@ def md_data_nr(tgt_file):
 def all_micro_test(md_dev):
     '''run all micro test, var in io size'''
     for io_size in get_io_block_size_list():
-        micro_test(md_dev, io_size)
+        micro_test(md_dev, io_size, 'write')
+        micro_test(md_dev, io_size, 'read')
 
 def get_file_list(trace_dir):
     '''files in a dir'''
@@ -272,7 +272,7 @@ def initialize_target(tgt, size_gb):
     io_block_size = 1024 * 1024 # 1MB
     io_depth = compute_raid_iodepth(raid_data_nr, RAIDCHUNK, io_block_size)
     fio_comm = comm_fio_cmd(IOENGINE, 'init_target', io_depth)
-    fio_cmd = micro_fio_cmd(tgt, RW, io_block_size, test_size, fio_comm)
+    fio_cmd = micro_fio_cmd(tgt, 'write', io_block_size, test_size, fio_comm)
     exec_fio_cmd(fio_cmd, None)
 
 def all_macro_test(md_dev, trace_dir):
