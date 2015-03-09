@@ -51,6 +51,7 @@ class Fio_result:
         self.bandwidth_dic = {}   # MB/s
         self.cpu_usr = 0
         self.cpu_sys = 0
+        self.file_name = None
 
     def __eq__(self, another):
         if self.name == another.name:
@@ -143,7 +144,7 @@ def parse_fio_result(fio_result):
 
     fio_char = get_fio_char(fio_result)
     rst = Fio_result(fio_char)
-
+    rst.file_name = fio_result
     result_fd = file(fio_result, 'r')
     last_type = None
 
@@ -392,7 +393,7 @@ def move_back_one_column(ws, col):
         i_cell.value = None
 
 def move_back_columns(ws, begin_col, end_col):
-    for col_i in range(end_col, begin_col, -1):
+    for col_i in range(end_col, begin_col - 1, -1):
         move_back_one_column(ws, col_i)
 
 def get_pos_insert_sort_one_column(ws, col_label, l_col):
@@ -496,19 +497,20 @@ def excel_add_fio_result(fio_result_obj, wb):
             if cell.value:
                 label_cell = ws.cell('A' + str(i_row))
                 if (label_cell.value == 'Avg CPU Usr' or
-                    label_cell.value == 'Avg CPU Sys'):
+                    label_cell.value == 'Avg CPU Sys' or
+                    (label_cell.value.find('Max') >= 0)):
                     if float(value) > float(cell.value):
                         cell.value = float(value)
-
-                elif (float(cell.value) > float(value) * 2 or
-                    float(value) > float(cell.value) * 2):
-                    row_label = ws.cell('A' + str(cell.row)).value
-                    print (('sheet: %s, col_label: %s, dev type: %s, ' +
-                           'label: %s, old: %s, new: %s')
-                           % (ws.title, col_label, dev_type, str(row_label), 
-                              cell.value, value))
+                elif (float(cell.value) > float(value) * 1.2 or
+                      float(value) > float(cell.value) * 1.2):
+                    row_label = label_cell.value
+                    if row_label.find('Avg') >= 0:
+                        print (('sheet: %s, col_label: %s, dev type: %s, ' +
+                                'label: %s, old: %s, new: %s, file %s')
+                               % (ws.title, col_label, dev_type, str(row_label), 
+                                  cell.value, value, fio_result_obj.file_name))
                 else:
-                    avg = '%.2f' % (float(cell.value) + float(value) / 2)
+                    avg = '%.2f' % ((float(cell.value) + float(value)) / 2)
                     cell.value = float(avg)
             else:
                 cell.value =  float(value)
@@ -539,6 +541,12 @@ def get_comparable_row_idx_by_label(ws, row_label):
 def check_comparalbe_row_idxes(ws, row1, row2):
     cell1 = ws.cell('A' + str(row1))
     cell2 = ws.cell('A' + str(row2))
+
+    if not cell1 or not cell2:
+        return 1
+
+    if not cell1.value or not cell2.value:
+        return 1
 
     if cell1 and cell2 and (cell1.value == cell2.value):
         return 1
