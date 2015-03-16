@@ -16,15 +16,20 @@ DISK_CACHE_SIZE = 64 * 1024 * 1024 # bytes
 
 def compute_micro_test_size(data_disk_nr, disk_cache_size):
     '''in order to make disk cache impact <= 1% on sequential IO'''
-    return disk_cache_size * data_disk_nr * 100
+    return disk_cache_size * data_disk_nr * 50
 
 def get_io_block_size_list():
     '''io size from 4KB to 2MB'''
     bslist = []
     io_size = BS
-    for _ in range(0, 10):
-        bslist.append(io_size)
-        io_size = io_size << 1
+    bslist.append(io_size)
+    io_size <<= 4
+    bslist.append(io_size)
+    io_size <<= 3
+    bslist.append(io_size)
+    io_size <<= 1
+    bslist.append(io_size)
+
     print bslist
     return bslist
 
@@ -256,6 +261,16 @@ def all_micro_test(md_dev):
         micro_test(md_dev, io_size, 'write')
         micro_test(md_dev, io_size, 'read')
 
+def micro_read_test(md_dev):
+    '''run all micro read test, var in io size'''
+    for io_size in get_io_block_size_list():
+        micro_test(md_dev, io_size, 'read')
+
+def micro_write_test(md_dev):
+    '''run all micro test, var in io size'''
+    for io_size in get_io_block_size_list():
+        micro_test(md_dev, io_size, 'write')
+
 def get_file_list(trace_dir):
     '''files in a dir'''
     (status, all_traces) = commands.getstatusoutput('ls ' + trace_dir)
@@ -302,6 +317,14 @@ def all_test():
 
     if (test_type == 'micro' or test_type == 'all'):
         all_micro_test(md_dev)
+
+    if (test_type == 'read'):
+        micro_read_test(md_dev)
+        return
+
+    if (test_type == 'write'):
+        micro_write_test(md_dev)
+        return
 
     if (test_type == 'micro'):
         return

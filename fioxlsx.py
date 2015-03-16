@@ -578,6 +578,7 @@ def excel_draw_compare_chart(ws, row_label):
     series2 = Series(values2, title=row_label + ' MD', xvalues=xvalues)
 
     lines = ScatterChart()
+    lines.title = row_label
     lines.append(series1)
     lines.append(series2)
     ws.add_chart(lines)
