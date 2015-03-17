@@ -6,6 +6,7 @@ import commands
 import time
 import os
 import sys
+import stat
 
 IOENGINE = 'libaio'
 
@@ -14,28 +15,53 @@ TESTFILE = 'asu-0'
 RAIDCHUNK = 512 * 1024             # bytes
 DISK_CACHE_SIZE = 64 * 1024 * 1024 # bytes
 
+def is_writebuffer_enabled(tgt):
+    (status, info) = commands.getstatusoutput('hdparm -W ' + tgt +
+                                              ' | grep write-caching')
+    if status or (info.find('0') > 0):
+        print info
+        return False
+
+    print '%s writebuffer enabled' % (tgt)
+    return True
+
 def compute_micro_test_size(data_disk_nr, disk_cache_size):
     '''in order to make disk cache impact <= 1% on sequential IO'''
+    if disk_cache_size == 0:
+        return 64 * 1024 * 1024
+
     return disk_cache_size * data_disk_nr * 50
 
 def get_io_block_size_list():
     '''io size from 4KB to 2MB'''
     bslist = []
-    io_size = BS
+    io_size = BS             #4KB
     bslist.append(io_size)
-    io_size <<= 4
+
+    io_size <<= 1            #8KB
+#    bslist.append(io_size)
+
+    io_size <<= 1            #16KB
+#   bslist.append(io_size)
+
+    io_size <<= 1            #32KB
+#    bslist.append(io_size)
+
+    io_size <<= 1            #64KB
     bslist.append(io_size)
-    io_size <<= 3
+
+    io_size <<= 3            #512KB
     bslist.append(io_size)
-    io_size <<= 1
+
+    io_size <<= 1            #1MB
     bslist.append(io_size)
 
     print bslist
     return bslist
 
 def compute_raid_iodepth(data_disk_nr, raid_chunk_size, io_block_size):
-    '''choose between NCQ size and RAID's chunk'''
-    if (io_block_size == 0 or raid_chunk_size == 0 or data_disk_nr == 0):
+    '''choose between NCQ size and RAID chunk'''
+    if (io_block_size == 0 or raid_chunk_size == 0 or data_disk_nr <= 1):
         return 32
 
     ncq_size = 32 * io_block_size
@@ -59,7 +85,7 @@ def test_compute_raid_iodepth():
 
 def comm_fio_cmd(engine, job_name, io_depth):
     '''common part of fio parameters'''
-    return ('fio --direct=1 --ioengine=' + engine + 
+    return ('fio --direct=1 --ioengine=' + engine +
             ' --name=' + job_name +
             ' --iodepth=' + str(io_depth) +
             ' --write_iops_log=' + job_name +
@@ -96,7 +122,7 @@ def test_macro_job_type():
     trace_file = '/mnt/trac'
     job_type = macro_job_type(trace_file)
     if (job_type != 'trac'):
-        print('unit test fail:' + macro_job_type.__name__ + 
+        print('unit test fail:' + macro_job_type.__name__ +
               'job name:' + job_type)
 
 def micro_fio_cmd(tgt, rw_type, io_block_size, test_size, fio_comm):
@@ -111,7 +137,7 @@ def micro_fio_cmd(tgt, rw_type, io_block_size, test_size, fio_comm):
 def macro_fio_cmd(tgt, trace_file, fio_comm):
     '''a trace io configuration'''
     return (fio_comm +
-            ' --read_iolog=' + trace_file + ' --replay_no_stall=1' + 
+            ' --read_iolog=' + trace_file + ' --replay_no_stall=1' +
             ' --replay_redirect=' + tgt)
 
 def print_fio_cmd(fio_cmd):
@@ -157,13 +183,14 @@ def exec_fio_cmd(fio_cmd, result_file):
     os.system('sync')
 
 def result_file_name(tgt, raid_data_nr, job_type):
-    '''result file name = target file name + date + job name'''
+    '''result file name = target file name + date + job name.
+    '_' is seperator for file names '''
     tgt_name = file_name(tgt)
     if (os.path.exists('/sys/block/' + tgt_name + '/md/txn')):
         tgt_name = tgt_name + 'T'
 
-    return ('./' + tgt_name + '_' + str(raid_data_nr) + '_' + 
-            time.strftime('%Y%m%d_%H%M%S') + 
+    return ('./' + tgt_name + '_' + str(raid_data_nr) + '_' +
+            time.strftime('%Y%m%d_%H%M%S') +
             '_' + job_type + '.txt')
 
 def micro_test(tgt, io_block_size, rw_type):
@@ -172,7 +199,11 @@ def micro_test(tgt, io_block_size, rw_type):
     raid_data_nr = md_data_nr(tgt)
     result_file = result_file_name(tgt, raid_data_nr, job_type)
     io_depth = compute_raid_iodepth(raid_data_nr, RAIDCHUNK, io_block_size)
-    test_size = compute_micro_test_size(raid_data_nr, DISK_CACHE_SIZE)
+    if is_writebuffer_enabled(tgt):
+        cache_size = DISK_CACHE_SIZE
+    else:
+        cache_size = 0
+    test_size = compute_micro_test_size(raid_data_nr, cache_size)
     job_name = file_name(result_file)
     fio_comm = comm_fio_cmd(IOENGINE, job_name, io_depth)
     fio_cmd = micro_fio_cmd(tgt, rw_type, io_block_size, test_size, fio_comm)
@@ -232,18 +263,27 @@ unit_test_all()
 
 def md_data_nr(tgt_file):
     '''get data disk number of a RAID6'''
+    data_nr = -1
+    mode = os.stat(tgt_file).st_mode
+
+    if stat.S_ISDIR(mode):
+        data_nr = 1  # if dev exist, data disk number is one for a normal disk
+    else:
+        return data_nr
+
     tgt = file_name(tgt_file)
+
     (status, disk_nr) = commands.getstatusoutput('cat /sys/block/' +
                                                  tgt + '/md/raid_disks')
     if (status):
         print_err_info(status, disk_nr)
-        return -1
-    
+        return data_nr
+
     (status, raid_type) = commands.getstatusoutput('cat /sys/block/' +
                                                    tgt + '/md/level')
     if (status):
         print_err_info(status, raid_type)
-        return -1
+        return data_nr
 
     print 'md type:' + raid_type + ' disk nr:' + disk_nr
 
@@ -277,7 +317,7 @@ def get_file_list(trace_dir):
     if (status):
         print_err_info(status, all_traces)
         return
-    
+
     return all_traces.split()
 
 def initialize_target(tgt, size_gb):
