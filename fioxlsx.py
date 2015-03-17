@@ -42,8 +42,9 @@ class Lat_percent:
 
 class Fio_result:
 
-    def __init__(self, name):
+    def __init__(self, name, time):
         self.name = name
+        self.time = time
         self.latency_percent_list = []         # msec
         self.info_dic = {}
         self.latency_dic = {}     # msec
@@ -51,7 +52,6 @@ class Fio_result:
         self.bandwidth_dic = {}   # MB/s
         self.cpu_usr = 0
         self.cpu_sys = 0
-        self.file_name = None
 
     def __eq__(self, another):
         if self.name == another.name:
@@ -95,20 +95,21 @@ def get_fio_char(fio_result):
 
     parts = fio_result[start:rw].split('_')
     char = ' '.join(parts[0:2])
+    time = ''.join(parts[2:4])
 
     left = fio_result[rw:].find('_')
     parts = fio_result[rw + left + 1:end].split('_')
 
     task = ' '.join(parts)
-    return ' '.join([char, task]).strip()
+    return (' '.join([char, task]).strip(), time)
 
 def test_get_fio_char():
-    test = get_fio_char('./md127_7_abc_dev_write_seq_4096.txt')
+    test, _ = get_fio_char('./md127_7_abc_dev_write_seq_4096.txt')
     if test != 'md127 7 seq 4096':
         print test
         return
 
-    test = get_fio_char('./md127T_6_20150307_123737_read_mds_1.txt')
+    test, _ = get_fio_char('./md127T_6_20150307_123737_read_mds_1.txt')
     if test != 'md127T 6 mds 1':
         print test
         return
@@ -142,9 +143,8 @@ def parse_fio_result(fio_result):
         #print_err_info(status, fio_result)
         return
 
-    fio_char = get_fio_char(fio_result)
-    rst = Fio_result(fio_char)
-    rst.file_name = fio_result
+    (fio_char, time) = get_fio_char(fio_result)
+    rst = Fio_result(fio_char, time)
     result_fd = file(fio_result, 'r')
     last_type = None
 
@@ -339,10 +339,12 @@ def excel_init_worksheet(ws, test_type, offset):
 
 def get_fio_dev_conf(fio_result_name):
     parts = fio_result_name.split()
-    if parts[2] == 'seq':
-        return ' '.join(parts[0:3])
-    else:
-        return ' '.join([parts[0]] + parts[2:])
+    return ' '.join([parts[0]] + parts[2:])
+
+    #if parts[2] == 'seq':
+    #    return ' '.join(parts[0:3])
+    #else:
+    #    return ' '.join([parts[0]] + parts[2:])
 
 def get_excel_worksheet(fio_result_name, wb):
     ws_name = get_fio_dev_conf(fio_result_name).replace('T', '')
@@ -360,10 +362,12 @@ def get_excel_worksheet(fio_result_name, wb):
 
 def get_column_name(fio_result_name):
     parts = fio_result_name.split()
-    if parts[2] == 'seq':
-        return int(parts[3])
-    else:
-        return int(parts[1])
+    return int(parts[1])
+
+    #if parts[2] == 'seq':
+    #    return int(parts[3])
+    #else:
+    #    return int(parts[1])
 
 def search_cell_in_row(ws, row, col_label, l_col):
     last_col_letter = utils.get_column_letter(l_col)
@@ -506,9 +510,9 @@ def excel_add_fio_result(fio_result_obj, wb):
                     row_label = label_cell.value
                     if row_label.find('Avg') >= 0:
                         print (('sheet: %s, col_label: %s, dev type: %s, ' +
-                                'label: %s, old: %s, new: %s, file %s')
+                                'label: %s, old: %s, new: %s, time %s')
                                % (ws.title, col_label, dev_type, str(row_label), 
-                                  cell.value, value, fio_result_obj.file_name))
+                                  cell.value, value, fio_result_obj.time))
                 else:
                     avg = '%.2f' % ((float(cell.value) + float(value)) / 2)
                     cell.value = float(avg)
@@ -529,9 +533,9 @@ def get_file_list(idir):
 def get_comparable_row_idx_by_label(ws, row_label):
     # we skip the first label with diff dev type 
     idx1 = 2
-    for row_idx in range(2, ws.get_highest_row() / 2):
+    for row_idx in range(2, len(info_names) + 1):
         cell = ws.cell('A' + str(row_idx))
-        if cell and cell.value == row_label:
+        if cell and (cell.value == row_label):
             idx1 = cell.row
             break
 
@@ -583,6 +587,76 @@ def excel_draw_compare_chart(ws, row_label):
     lines.append(series2)
     ws.add_chart(lines)
 
+
+def get_comparable_rw_row_idx_by_label(ws, row_label):
+    row1 = None
+    row2 = None
+    row3 = None
+    row4 = None
+
+    if row_label == 'Avg BW':
+        (row1, row2) = get_comparable_row_idx_by_label(ws, 'Avg Write BW')
+        (row3, row4) = get_comparable_row_idx_by_label(ws, 'Avg Read BW')
+    elif row_label == 'Avg IOPS':
+        (row1, row2) = get_comparable_row_idx_by_label(ws, 'Avg Write IOPS')
+        (row3, row4) = get_comparable_row_idx_by_label(ws, 'Avg Read IOPS')
+    elif row_label == 'Avg Lat':
+        (row1, row2) = get_comparable_row_idx_by_label(ws, 'Avg Write Lat')
+        (row3, row4) = get_comparable_row_idx_by_label(ws, 'Avg Read Lat')
+    elif row_label == 'Max Lat':
+        (row1, row2) = get_comparable_row_idx_by_label(ws, 'Max Write Lat')
+        (row3, row4) = get_comparable_row_idx_by_label(ws, 'Max Read Lat')
+
+    return (row1, row2, row3, row4)
+
+def check_comparalbe_rw_row_idxes(ws, row1, row2, row3, row4):
+    if not check_comparalbe_row_idxes(ws, row1, row2):
+        return 0
+
+    if not check_comparalbe_row_idxes(ws, row3, row4):
+        return 0
+
+    if (row1 == row3) or (row2 == row4):
+        print 'Err: rows %d %d %d %d' % (row1, row2, row3, row4)
+        return 0
+
+    return 1
+
+def excel_draw_compare_rw_chart(ws, row_label):
+    '''Warning: Openpyxl currently supports chart creation within a worksheet only.
+    Charts in existing workbooks will be lost'''
+
+    (row1, row2, row3, row4) = get_comparable_rw_row_idx_by_label(ws, row_label)
+
+    if not check_comparalbe_rw_row_idxes(ws, row1, row2, row3, row4):
+        return
+
+    start_col = 2
+    end_col = ws.get_highest_column()
+
+    xvalues = Reference(ws, (1, start_col), (1, end_col))
+
+    values1 = Reference(ws, (row1, start_col), (row1, end_col))
+    series1 = Series(values1, title='Write' + ' T', xvalues=xvalues)
+
+    values2 = Reference(ws, (row2, start_col), (row2, end_col))
+    series2 = Series(values2, title='Write' + ' MD', xvalues=xvalues)
+
+    values3 = Reference(ws, (row3, start_col), (row3, end_col))
+    series3 = Series(values3, title='Read' + ' T', xvalues=xvalues)
+
+    values4 = Reference(ws, (row4, start_col), (row4, end_col))
+    series4 = Series(values4, title='Read' + ' MD', xvalues=xvalues)
+
+    lines = ScatterChart()
+    lines.title = row_label
+    lines.append(series1)
+    lines.append(series2)
+    lines.append(series3)
+    lines.append(series4)
+
+    ws.add_chart(lines)
+
 def excel_draw_all_char(wb):
     for ws_name in wb.sheetnames:
         ws = wb.get_sheet_by_name(ws_name)
@@ -590,7 +664,24 @@ def excel_draw_all_char(wb):
             continue
 
         for label in info_names:
-            excel_draw_compare_chart(ws, label)
+            if label.find('CPU') >= 0:
+                continue
+
+            if label.find('Read') >= 0:
+                break
+
+            if ws.title.find('seq') >= 0:
+                if label.find('IOPS') >= 0:
+                    continue
+                if label.find('Lat') >= 0:
+                    continue
+            else:
+                if label.find('BW') >= 0:
+                    continue
+                if (label.find('Lat') >= 0) and (label.find('Avg') >=0):
+                    continue
+
+            excel_draw_compare_rw_chart(ws, label.replace('Write ', ''))
 
 import time
 def parse_all_test_file():
