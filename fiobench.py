@@ -19,16 +19,16 @@ def is_writebuffer_enabled(tgt):
     (status, info) = commands.getstatusoutput('hdparm -W ' + tgt +
                                               ' | grep write-caching')
     if status or (info.find('0') > 0):
-        print info
+        print '% get write buffer info failed' % (info)
         return False
 
-    print '%s writebuffer enabled' % (tgt)
+    print '%s write buffer enabled' % (tgt)
     return True
 
 def compute_micro_test_size(data_disk_nr, disk_cache_size):
     '''in order to make disk cache impact <= 1% on sequential IO'''
     if disk_cache_size == 0:
-        return 64 * 1024 * 1024
+        disk_cache_size = DISK_CACHE_SIZE
 
     return disk_cache_size * data_disk_nr * 50
 
@@ -39,13 +39,13 @@ def get_io_block_size_list():
     bslist.append(io_size)
 
     io_size <<= 1            #8KB
-#    bslist.append(io_size)
+    bslist.append(io_size)
 
     io_size <<= 1            #16KB
-#   bslist.append(io_size)
+    bslist.append(io_size)
 
     io_size <<= 1            #32KB
-#    bslist.append(io_size)
+    bslist.append(io_size)
 
     io_size <<= 1            #64KB
     bslist.append(io_size)
@@ -199,10 +199,7 @@ def micro_test(tgt, io_block_size, rw_type):
     raid_data_nr = md_data_nr(tgt)
     result_file = result_file_name(tgt, raid_data_nr, job_type)
     io_depth = compute_raid_iodepth(raid_data_nr, RAIDCHUNK, io_block_size)
-    if is_writebuffer_enabled(tgt):
-        cache_size = DISK_CACHE_SIZE
-    else:
-        cache_size = 0
+    cache_size = DISK_CACHE_SIZE
     test_size = compute_micro_test_size(raid_data_nr, cache_size)
     job_name = file_name(result_file)
     fio_comm = comm_fio_cmd(IOENGINE, job_name, io_depth)
@@ -268,8 +265,10 @@ def md_data_nr(tgt_file):
 
     if stat.S_ISDIR(mode):
         data_nr = 1  # if dev exist, data disk number is one for a normal disk
-    else:
         return data_nr
+    elif stat.S_ISLNK(mode):
+       tgt_file = os.readlink(tgt_file) 
+       print tgt_file
 
     tgt = file_name(tgt_file)
 
