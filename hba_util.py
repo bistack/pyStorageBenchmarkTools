@@ -1,9 +1,11 @@
 #!/usr/bin/python
 from commands import getstatusoutput
+from misc_lib import run_command_list
 
 class HBA:
-    def __init__(self, name):
+    def __init__(self, name = None):
         self.sys_name = name
+        self.tested = 0
         self.bdev_list_dir = {}
 
     def test_bdev(self):
@@ -11,8 +13,8 @@ class HBA:
             return
 
         for (_, bdev_list) in self.bdev_list_dir.items():
-            ok = 0
             i = 0
+
             while i < len(bdev_list):
                 bdev = bdev_list[i]
                 cmd = ' '.join(['swapon -s | grep', bdev])
@@ -25,30 +27,31 @@ class HBA:
                 cmd = ' '.join(['mount', '|', 'grep', bdev])
                 (status, _) = getstatusoutput(cmd)
                 if status: # not mounted
-                    cmd = ' '.join(['fdisk -l /dev/' + bdev,
-                                    '|', 'grep valid'])
+                    cmd = ' '.join(['cat /proc/partitions',
+                                    '|', 'grep', bdev, '|', 'wc -l'])
                     (status, info) = getstatusoutput(cmd)
-                    
-                    if not status or (len(info) == 0):
+
+                    if status or (int(info) > 1):
                         print 'it has partiations: %s' % (bdev)
                         del bdev_list[i]
                         continue
 
-#                    cmd = ' '.join(['dd if=/dev/zero of=/dev/' + bdev,
-#                                    'bs=1M count=1 oflag=direct 2>&1',
-#                                    '|', 'grep MB'])
-#                    (status, _) = getstatusoutput(cmd)
-#                    if status:
-#                        print 'cannot write: %s' % (bdev)
-#                        del bdev_list[i]
-#                        continue
+                    cmd = ' '.join(['dd if=/dev/zero of=/dev/' + bdev,
+                                    'bs=1M count=100 oflag=direct 2>&1',
+                                    '|', 'grep MB'])
+                    (status, _) = getstatusoutput(cmd)
+                    if status:
+                        print 'cannot write: %s' % (bdev)
+                        del bdev_list[i]
+                        continue
 
                     i += 1
                 else:
                     print 'it mounted: %s' % (bdev)
                     del bdev_list[i]
 
-        print bdev_list
+            print 'find %s' % (bdev_list)
+        self.tested = 1
 
     def get_bdev(self):
         base = '/sys/bus/pci/drivers/' + self.sys_name
@@ -99,7 +102,8 @@ class HBA:
 
             self.bdev_list_dir[host] = bdev_list
 
-        self.test_bdev()
+        if not self.tested:
+            self.test_bdev()
 
     def print_bdev_list(self):
         if not len(self.bdev_list_dir):
@@ -119,24 +123,53 @@ class HBA:
         avg = cnt / hba_cnt
         rem = cnt % hba_cnt
 
-        j = rem
-        for (_, bdev_list) in self.bdev_list_dir.items():
-            i = avg
+        for i in range(0, avg):
+            for (_, bdev_list) in self.bdev_list_dir.items():
+                if i < len(bdev_list):
+                    chose_list.append(bdev_list[i])
+        
+        for i in range(avg, avg + rem):
+            for (_, bdev_list) in self.bdev_list_dir.items():
+                if len(bdev_list) <= i:
+                    continue
 
-
-            for bdev in bdev_list:
-                if i == 0 and j == 0:
-                    break
-
-                chose_list.append(bdev)
-                if i > 0:
-                    i -= 1
-                elif j > 0:
-                    j -= 1
-                    break
+                chose_list.append(bdev_list[i])
 
         if len(chose_list) < cnt:
             print 'need %d bdevs' % (cnt)
             self.print_bdev_list()
 
         return chose_list
+
+    def find_hba_name(self):
+        hba_names = ['mv64xx', 'mptspi']
+        for hba in hba_names:
+            base = '/sys/bus/pci/drivers/'
+            cmd = ' '.join(['ls', base, '|', 'grep', hba])
+            (status, output) = getstatusoutput(cmd)
+
+            if status or not len(output):
+                continue
+            else:
+                self.sys_name = hba
+                return self.sys_name
+
+    def cleanup_dev_list(self, bdevs):
+        for dev_name in bdevs:
+            dev_path = '/dev/' + dev_name
+            self.__cleanup_dev(dev_path)
+
+    def cleanup_all_dev(self):
+        if not len(self.bdev_list_dir):
+            return
+
+        for _, bdevs in self.bdev_list_dir.items():
+            for dev_name in bdevs:
+                dev_path = '/dev/' + dev_name
+                self.__cleanup_dev(dev_path)
+
+    def __cleanup_dev(self, dev):
+        print 'clean %s' % (dev)
+        cmd = ''.join(['dd if=/dev/zero of=', dev, ' bs=1M count=100'])
+        cmds = [cmd]
+        run_command_list(cmds)
