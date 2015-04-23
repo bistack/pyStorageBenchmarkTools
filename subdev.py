@@ -155,18 +155,14 @@ def assemble_all_sd():
     return status
 
 def init_cbd():
-    cmds = ['modprobe bwtrace',
-            'modprobe cbd',
-            ]
+    cmds = ['modprobe cbd']
     (status, _) = run_command_list(cmds)
     return status
 
 def exit_cbd():
     cmds = ['modprobe -r buddy',
             'modprobe -r vlru',
-            'modprobe -r cbd',
-            'modprobe -r bwtrace'
-            ]
+            'modprobe -r cbd']
     (status, _) = run_command_list(cmds)
     return status
 
