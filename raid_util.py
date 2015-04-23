@@ -2,8 +2,9 @@
 
 import os
 import time
-#import stat
 from misc_lib import run_command_list
+from commands import getstatusoutput
+import stat
 
 class Speed:
     def __init__(self):
@@ -39,7 +40,7 @@ class Raid_Util:
         self.sub_dev_list = []
         self.__sub_dev_cnt = 0
         self.cmd_args = ''
-        self.__stripe_cache_size = 1024
+        self.__stripe_cache_size = 16384
         self.raid_sub_dev_size_KB = 0
         self.raid_level = 6
 
@@ -95,10 +96,21 @@ class Raid_Util:
         return self.__cmd_dir + '/mdadm'
 
     def set_sub_dev_list(self, dev_list):
-        self.sub_dev_list = dev_list
+        size_kb = find_min_dev_size_kb(dev_list)
+        size_kb /= 1024
+        if size_kb > 0:
+            size_kb *= 1024
+            self.set_raid_sub_dev_size_KB(size_kb - 4*1024)
+            self.sub_dev_list = dev_list
 
     def get_sub_dev_list(self):
         return self.sub_dev_list
+
+    def add_sub_dev(self, dev):
+        self.sub_dev_list.append(dev)
+
+    def del_sub_dev(self, dev):
+        self.sub_dev_list.remove(dev)
 
     def get_sub_dev_cnt(self):
         self.__sub_dev_cnt = len(self.sub_dev_list)
@@ -107,6 +119,21 @@ class Raid_Util:
     def set_raid_name(self, name):
         self.raid_name = name
 
+    def search_raid_dev_path(self):
+        dev_paths = self.get_sub_dev_list()
+        status = 0
+        for dev in dev_paths:
+            dev_name = dev.split(os.sep)[-1]
+            cmd = 'cat /proc/mdstat | grep' + dev_name
+            (status, output) = getstatusoutput(cmd)
+            if not status:
+                break
+
+        if not status and output:
+            return ''.join(['/dev/', output.split()[0]])
+        
+        return None
+
     def get_raid_path(self):
         path = None
         if os.path.exists('/dev/' + self.raid_name):
@@ -114,7 +141,10 @@ class Raid_Util:
         elif os.path.exists('/dev/md/' + self.raid_name):
             path = ''.join(['/dev/md/', self.raid_name])
 
-        return path
+        if path:
+            return path
+        
+        return self.search_raid_dev_path()
 
     def get_sys_name(self):
         if self.__sys_name:
@@ -124,12 +154,13 @@ class Raid_Util:
         if not path:
             return
 
-        #mode = os.stat(path).st_mode
-        tgt = os.readlink(path)
-        #print tgt
+        mode = os.stat(path).st_mode
+        if stat.S_ISLNK(mode):
+            tgt = os.readlink(path)
+        else:
+            tgt = path
         self.__sys_name = tgt.split(os.sep)[-1]
         return self.__sys_name
-
 
     def remove_raid(self):
         path = self.get_raid_path()
@@ -178,6 +209,15 @@ class Raid_Util:
                           '--force', devs])]
         run_command_list(cmds)
 
+    def change_raid_stripe_cache_size(self):
+        if not self.get_sys_name():
+            return
+
+        cmd_change = ''.join(['echo ', str(self.get_stripe_cache_size()),
+                              ' > /sys/block/', self.get_sys_name(),
+                              '/md/stripe_cache_size'])
+        cmds =  [cmd_change]
+        run_command_list(cmds)
 
     def create_raid(self):
         if self.get_sub_dev_cnt() < self.get_lest_sub_dev_cnt():
@@ -197,18 +237,29 @@ class Raid_Util:
                                '-l', str(self.get_raid_level()),
                                '-z', str(self.get_raid_sub_dev_size_KB()),
                                txn, devs])
-
         cmds =  [cmd_create]
-        run_command_list(cmds)
-
-        if not self.get_sys_name():
+        (err, _) = run_command_list(cmds)
+        if err:
             return
 
-        cmd_change = ''.join(['echo ', str(self.get_stripe_cache_size()),
-                              ' > /sys/block/', self.get_sys_name(),
-                              '/md/stripe_cache_size'])
-        cmds =  [cmd_change]
-        run_command_list(cmds)
+        cmd_map = ' '.join(['cat /dev/md/md-device-map', '|',
+                            'grep', self.raid_name])
+        (status, output) = getstatusoutput(cmd_map)
+        if not status:
+            dev_path = '/dev/' + output.split()[0]
+        else:
+            dev_path = self.search_raid_dev_path()
+
+        if dev_path:
+            cmd_link1 = ''.join(['ln -s ', dev_path,
+                                 ' /dev/',self.raid_name])
+            cmd_link2 = ''.join(['ln -s ', dev_path,
+                                 ' /dev/md/', self.raid_name])
+            cmds = [cmd_link1, cmd_link2]
+            run_command_list(cmds)
+            return
+
+
 
     def assemble_raid(self):
         raid_cmd = self.get_cmd()
@@ -223,7 +274,7 @@ class Raid_Util:
         cmds = ['cat /proc/mdstat',
                 ''.join(['cat /sys/block/', self.get_sys_name(),
                          '/md/stripe_cache_size']),
-                #'cat /proc/modules | grep raid456'
+                'cat /proc/modules | grep raid456'
                 ]
         run_command_list(cmds)
 
@@ -241,7 +292,9 @@ class Raid_Util:
                              ])
 
         cmds = [cmd_fail, cmd_remove]
-        run_command_list(cmds)
+        (err, _) = run_command_list(cmds)
+        if not err:
+            self.del_sub_dev(tgt)
 
     def fail_two(self, index1 = 0, index2 = 1):
         self.fail_one(index1)
@@ -258,6 +311,11 @@ class Raid_Util:
                         ])
         cmds = [cmd]
         run_command_list(cmds)
+
+        (err, _) = run_command_list(cmds)
+        if not err:
+            self.add_sub_dev(tgt)
+
 
     def add_two(self, index1 = 0, index2 = 1):
         self.add_one(index1)
@@ -301,13 +359,14 @@ class Raid_Util:
     def wait_recovery_time(self, cnt = 100):
         speed_obj = Speed()
         for i in range(cnt):
-            if i < 7:
+            time.sleep(1)
+
+            if i < 3:
                 continue
 
             ret = self.check_recovery_speed(speed_obj)
             if not ret:
                 break
-            time.sleep(1)
 
         print 'recovery speed (max avg min):', speed_obj.get_values()
 
@@ -317,4 +376,19 @@ class Raid_Util:
         while self.check_recovery_speed(speed_obj):
             time.sleep(5)
 
-        print 'resync speed (max avg min):', speed_obj.get_values()
+        if speed_obj.__max:
+            print 'resync speed (max avg min):', speed_obj.get_values()
+
+def find_min_dev_size_kb(dev_path_list):
+    min_size_kb = -1
+    for dev_path in dev_path_list:
+        name = dev_path.split(os.sep)[-1]
+        cmds = ['cat /proc/partitions | grep ' + name]
+        (status, line) = run_command_list(cmds)
+        if status:
+            continue
+        size_kb = int(line.split()[2])
+        if (size_kb < min_size_kb) or (min_size_kb < 0):
+            min_size_kb = size_kb
+
+    return min_size_kb
